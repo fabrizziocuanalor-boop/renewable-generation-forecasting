@@ -11,7 +11,6 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 }
 
-# Our 4 representative Texas locations
 locations = [
     {"name": "midland", "lat": 31.99, "lon": -102.08},
     {"name": "sweetwater", "lat": 32.47, "lon": -100.41},
