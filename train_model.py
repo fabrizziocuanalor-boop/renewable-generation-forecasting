@@ -59,7 +59,7 @@ for feature, coef in zip(features, model.coef_):
 # Now let's do the same thing for SOLAR
 # ============================================
 
-solar_features = ["GHI", "Cloud Type", "Temperature", "hour", "month"]
+solar_features = ["GHI", "Temperature", "hour", "month"]
 solar_target = "solar_generation_mwh"
 
 X_train_solar = train[solar_features]
