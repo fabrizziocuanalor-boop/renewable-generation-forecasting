@@ -16,8 +16,11 @@ for year in years:
 wind_all = pd.concat(wind_pieces, ignore_index=True)
 solar_all = pd.concat(solar_pieces, ignore_index=True)
 
-wind_all["timestamp"] = pd.to_datetime(wind_all["period"], format="%Y-%m-%dT%H")
-solar_all["timestamp"] = pd.to_datetime(solar_all["period"], format="%Y-%m-%dT%H")
+# IMPORTANT FIX: EIA's "period" timestamps are in UTC, but our weather data
+# is in Texas local time (CST = UTC-6 in winter). We subtract 6 hours here
+# so both datasets describe the same real-world moment in time.
+wind_all["timestamp"] = pd.to_datetime(wind_all["period"], format="%Y-%m-%dT%H") - pd.Timedelta(hours=6)
+solar_all["timestamp"] = pd.to_datetime(solar_all["period"], format="%Y-%m-%dT%H") - pd.Timedelta(hours=6)
 
 wind_all = wind_all[["timestamp", "value"]].rename(columns={"value": "wind_generation_mwh"})
 solar_all = solar_all[["timestamp", "value"]].rename(columns={"value": "solar_generation_mwh"})
