@@ -41,6 +41,10 @@ Midland, Sweetwater, Fort Stockton, Amarillo.
 
 Solar outperforms wind because irradiance-to-output is a more direct, closer-to-linear relationship than wind speed-to-output, which follows a cubic power curve up to rated capacity and then flattens or cuts out — a nonlinearity a simple linear model cannot represent. ERCOT's wind fleet is also geographically dispersed across hundreds of miles, so four representative weather points inherently capture less of the system-wide picture than they do for solar.
 
+![Solar generation: actual vs predicted, sample week June 2023](images/solar_prediction_chart.png)
+
+*The model correctly captures the daily on/off solar cycle but consistently under-predicts peak output — visually illustrating what an R² of 0.579 looks like in practice: directionally correct, but imperfect.*
+
 ## Data Quality Investigations
 
 ### 1. Timezone misalignment (found and fixed)
@@ -78,6 +82,8 @@ Even after the timezone fix, solar's GHI coefficient can flip sign depending on 
 data/
   raw/                      # Original downloaded weather & generation CSVs
   final_dataset.csv         # Merged, cleaned dataset used for modeling
+images/
+  solar_prediction_chart.png # Actual vs predicted solar generation chart
 download_weather.py         # Pulls NREL NSRDB weather data
 download_generation.py      # Pulls EIA ERCOT generation data (with pagination)
 build_dataset.py            # Merges weather + generation into final_dataset.csv
@@ -88,4 +94,4 @@ grid_analysis.py            # Grid preparedness / variability analysis
 
 ## Tools
 
-Python, pandas, scikit-learn, NREL NSRDB API, EIA API v2.
+Python, pandas, scikit-learn, matplotlib, NREL NSRDB API, EIA API v2.

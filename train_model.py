@@ -83,3 +83,22 @@ print(f"R² score: {solar_r2:.3f}")
 print(f"\nModel coefficients (how much each feature matters):")
 for feature, coef in zip(solar_features, solar_model.coef_):
     print(f"  {feature}: {coef:.2f}")
+
+import matplotlib.pyplot as plt
+
+# Let's visualize how well our solar predictions match reality for a sample week in 2023
+sample_week = test[(test["timestamp"] >= "2023-06-01") & (test["timestamp"] <= "2023-06-07")].copy()
+sample_week_features = sample_week[solar_features]
+sample_week_predictions = solar_model.predict(sample_week_features)
+
+plt.figure(figsize=(12, 5))
+plt.plot(sample_week["timestamp"], sample_week["solar_generation_mwh"], label="Actual", linewidth=2)
+plt.plot(sample_week["timestamp"], sample_week_predictions, label="Predicted", linewidth=2, linestyle="--")
+plt.xlabel("Date")
+plt.ylabel("Solar Generation (MWh)")
+plt.title("Solar Generation: Actual vs. Predicted (Sample Week, June 2023)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig("solar_prediction_chart.png", dpi=150)
+print("\nChart saved to solar_prediction_chart.png")
