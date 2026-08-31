@@ -92,6 +92,35 @@ train_model.py              # Trains and evaluates wind & solar regression model
 grid_analysis.py            # Grid preparedness / variability analysis
 ```
 
+## How to Run This
+
+**Requirements:** Python 3, plus free API keys from [EIA](https://www.eia.gov/opendata/register.php) and [NREL/NLR](https://developer.nlr.gov/signup/).
+
+1. **Clone the repo and install dependencies:**
+   ```
+   git clone git@github.com:fabrizziocuanalor-boop/renewable-generation-forecasting.git
+   cd renewable-generation-forecasting
+   pip3 install requests python-dotenv pandas scikit-learn matplotlib --break-system-packages
+   ```
+
+2. **Add your API keys.** Create a file named `.env` in the project root containing:
+   ```
+   EIA_API_KEY=your_eia_key_here
+   NREL_API_KEY=your_nrel_key_here
+   ```
+
+3. **Run the pipeline in order:**
+   ```
+   python3 download_weather.py       # Downloads weather data (4 locations x 3 years)
+   python3 download_generation.py    # Downloads ERCOT generation data (2 fuel types x 3 years)
+   python3 build_dataset.py          # Merges everything into data/final_dataset.csv
+   python3 explore_dataset.py        # Prints data quality checks
+   python3 train_model.py            # Trains wind & solar models, saves prediction chart
+   python3 grid_analysis.py          # Runs the grid preparedness analysis
+   ```
+
+Each script prints its own progress and results to the terminal. Total runtime is a few minutes, mostly spent waiting on API rate limits during download.
+
 ## Tools
 
 Python, pandas, scikit-learn, matplotlib, NREL NSRDB API, EIA API v2.
