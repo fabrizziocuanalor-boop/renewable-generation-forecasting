@@ -1,6 +1,6 @@
 # Renewable Generation Forecasting Tool — ERCOT (Texas)
 
-A regression-based tool that predicts hourly wind and solar generation on the ERCOT (Texas) grid from weather forecast variables, and uses that model to assess how prepared the grid is for renewable generation variability.
+A regression-based tool that predicts hourly wind and solar generation on the ERCOT (Texas) grid using historical meteorological variables, and uses that model to assess how prepared the grid is for renewable generation variability. This project tests the predictive relationship between weather and generation using historical observations, not live operational forecasts — see Limitations for what would be needed to extend this to a true forecasting tool.
 
 **Author:** Fabrizzio Cuanalo
 **Repo:** [renewable-generation-forecasting](https://github.com/fabrizziocuanalor-boop/renewable-generation-forecasting)
@@ -32,6 +32,18 @@ Midland, Sweetwater, Fort Stockton, Amarillo, Abilene, Lubbock, Big Spring, McCa
 3. **Modeling:** Separate linear regression models for wind and solar generation, trained on 2021–2022 and tested on 2023 — a chronological (not random) split, to avoid data leakage from training and testing on the same time period.
 4. **Grid analysis:** Hour-to-hour changes in combined generation are used as a proxy for the ramping capacity ERCOT must maintain in reserve.
 
+## Research Process
+
+The final model was not the result of a single modeling specification decided upfront. The analysis evolved through several diagnostic iterations, each triggered by a specific, checkable problem:
+
+1. An initial 4-location model was built and trained first, establishing a baseline.
+2. During validation, solar generation appeared at physically implausible hours (peaking at 8–9 PM in December). Investigating this led to discovering a 6-hour timestamp misalignment between the two data sources, which was corrected.
+3. After the fix, the wind model's accuracy remained noticeably lower than solar's. Two specific, competing explanations were tested rather than assumed: a nonlinear wind-speed-to-power relationship, and insufficient geographic coverage of the 4 original weather locations.
+4. Adding a cubic wind-speed term tested the first explanation and produced a negligible improvement. Expanding to 8 locations tested the second and produced a larger, more meaningful one — evidence favoring geographic coverage as the more significant factor, though not a fully isolated causal test (see Limitations).
+5. Separately, a counterintuitive negative coefficient on solar irradiance (GHI) was investigated manually, then checked against a formal VIF multicollinearity test, which came back low and appeared to contradict the manual finding. Plotting GHI against hour-of-day resolved the contradiction by revealing a non-linear relationship that the linear VIF test could not detect.
+
+Each step above was driven by a specific anomaly or open question, not a predetermined plan — the raw script history and intermediate results are preserved in the repository's commit history for anyone who wants to trace the sequence.
+
 ## Model Results
 
 | Model | Features | Locations | MAE (MWh) | R² |
@@ -45,7 +57,9 @@ Midland, Sweetwater, Fort Stockton, Amarillo, Abilene, Lubbock, Big Spring, McCa
 Solar outperforms wind by a wide margin, and the gap turned out to be more interesting to investigate than to just report. Wind turbines generate power roughly proportional to wind speed cubed, not wind speed directly, so a plain straight-line model should structurally struggle to capture that curve. Two competing explanations were tested directly rather than assumed:
 
 1. **The nonlinear wind-speed-to-power curve.** Adding wind speed cubed as an extra input only improved R² from 0.237 to 0.243 — a negligible change, ruling this out as the primary bottleneck.
-2. **Insufficient spatial coverage of ERCOT's dispersed wind fleet.** The original 4 weather locations were expanded to 8 (adding Abilene, Lubbock, Big Spring, and McCamey), covering more of West Texas's wind corridor. This produced a real improvement, from R² = 0.243 to R² = 0.264 — a meaningfully larger jump than the cubic term provided, confirming spatial coverage as the more significant limitation.
+2. **Insufficient spatial coverage of ERCOT's dispersed wind fleet.** The original 4 weather locations were expanded to 8 (adding Abilene, Lubbock, Big Spring, and McCamey), covering more of West Texas's wind corridor. This produced a real improvement, from R² = 0.243 to R² = 0.264 — a meaningfully larger jump than the cubic term provided, providing evidence that spatial coverage was a more significant limitation than the wind-speed-cubed term in this specification.
+
+This is evidence, not a clean causal proof. Only one set of 4 additional locations was tested, so it isn't possible to fully separate "spatial coverage in general" from "these particular 4 towns happened to correlate well with ERCOT-wide wind output." A stronger test would compare several different sets of added locations, or weight locations by installed wind capacity, to confirm the effect is really about coverage rather than the specific points chosen.
 
 Solar's R² barely moved with the added locations (0.579 → 0.582), consistent with the theory: sunlight is more spatially uniform across a region at a given time than wind speed is, so solar was never as constrained by limited geographic coverage in the first place.
 
@@ -85,7 +99,8 @@ The conclusion: `hour` is retained for its predictive value, and individual coef
 
 ## Limitations
 
-- Two competing explanations for wind's low R² were tested directly: the nonlinear wind-speed-to-power curve (adding wind speed cubed only improved R² from 0.237 to 0.243) and insufficient spatial coverage (expanding from 4 to 8 weather locations improved R² from 0.243 to 0.264). The larger effect from added coverage confirms spatial coverage as the more significant limitation, though wind's R² of 0.264 still leaves most of its variation unexplained — further gains would likely require even broader coverage, capacity-weighted station selection, or a non-linear model.
+- This project uses historical weather observations (NSRDB), not live operational weather forecasts. It tests whether a predictive relationship exists between meteorological variables and generation, not the accuracy of a deployable next-day forecasting system. Extending this to true forecasting would require substituting forecast data (with its own error characteristics) for the historical observations used here, and validating against forecast lead time.
+- Two competing explanations for wind's low R² were tested directly: the nonlinear wind-speed-to-power curve (adding wind speed cubed only improved R² from 0.237 to 0.243) and insufficient spatial coverage (expanding from 4 to 8 weather locations improved R² from 0.243 to 0.264). This is evidence that spatial coverage was the more significant limitation of the two, not a fully isolated causal proof — only one set of 4 additional locations was tested, so it's possible the improvement partly reflects those specific towns rather than coverage in general. Wind's R² of 0.264 still leaves most of its variation unexplained — further gains would likely require broader coverage still, capacity-weighted station selection, or a non-linear model.
 - Four weather points are a simplification of ERCOT's dispersed wind and solar fleet; capacity-weighted or a larger set of representative stations would improve location representativeness.
 - The 6-hour timezone correction does not account for daylight saving time (Texas shifts to UTC−5 part of the year), introducing a small residual misalignment during DST months.
 - Solar model coefficients should not be individually interpreted due to the documented GHI/hour multicollinearity; only the model's aggregate predictive accuracy (R²) should be relied on.
@@ -125,7 +140,7 @@ grid_analysis.py            # Grid preparedness / variability analysis
 
 3. **Run the pipeline in order:**
    ```
-   python3 download_weather.py       # Downloads weather data (4 locations x 3 years)
+   python3 download_weather.py       # Downloads weather data (8 locations x 3 years)
    python3 download_generation.py    # Downloads ERCOT generation data (2 fuel types x 3 years)
    python3 build_dataset.py          # Merges everything into data/final_dataset.csv
    python3 explore_dataset.py        # Prints data quality checks
@@ -134,6 +149,28 @@ grid_analysis.py            # Grid preparedness / variability analysis
    ```
 
 Each script prints its own progress and results to the terminal. Total runtime is a few minutes, mostly spent waiting on API rate limits during download.
+
+## Glossary
+
+**Statistical / ML terms**
+- **Regression model** — a model that predicts a number (e.g., megawatt-hours) from other numbers (e.g., wind speed), by fitting a formula to past data.
+- **Linear regression** — the simplest regression type, assuming a straight-line relationship between inputs and output.
+- **Coefficient** — the number a model assigns to each input, representing how much that input influences the prediction.
+- **R² (R-squared)** — a 0–1 score showing what share of the target's variation the model's inputs explain.
+- **MAE (Mean Absolute Error)** — the average size of the model's prediction errors, in the target's units.
+- **Training set / test set** — the training set is what the model learns from; the test set is unseen data used to check if it generalizes.
+- **Data leakage** — when test-set information accidentally influences training, inflating apparent accuracy.
+- **Multicollinearity** — when input variables are highly related to each other, making individual coefficients unreliable even if overall predictions remain valid.
+- **VIF (Variance Inflation Factor)** — the standard statistical test for multicollinearity; detects only linear (straight-line) correlation between inputs.
+- **Nonlinear relationship** — a relationship where the rate of change isn't constant, unlike a straight line.
+
+**Domain-specific terms**
+- **ERCOT** — the organization managing the electric grid for most of Texas.
+- **Balancing authority** — an organization responsible for keeping electricity supply and demand matched in real time across its grid.
+- **GHI (Global Horizontal Irradiance)** — a measurement of sunlight intensity, used as the main solar generation predictor.
+- **MWh (Megawatt-hour)** — a unit of electrical energy: one megawatt sustained for one hour.
+- **UTC (Coordinated Universal Time)** — a global time standard many large data systems default to, instead of local time zones.
+- **Pagination** — when an API limits results per request, requiring multiple sequential requests to retrieve all the data.
 
 ## Tools
 
