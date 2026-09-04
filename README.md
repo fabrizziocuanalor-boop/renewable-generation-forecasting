@@ -36,10 +36,14 @@ Midland, Sweetwater, Fort Stockton, Amarillo.
 
 | Model | Features | MAE (MWh) | R² |
 |---|---|---|---|
-| Wind | Wind Speed, Temperature, hour, month | 4,566 | 0.237 |
+| Wind | Wind Speed, Wind Speed³, Temperature, hour, month | 4,540 | 0.243 |
 | Solar | GHI, Cloud Type, Temperature, hour, month | 1,998 | 0.579 |
 
-Solar outperforms wind because irradiance-to-output is a more direct, closer-to-linear relationship than wind speed-to-output, which follows a cubic power curve up to rated capacity and then flattens or cuts out — a nonlinearity a simple linear model cannot represent. ERCOT's wind fleet is also geographically dispersed across hundreds of miles, so four representative weather points inherently capture less of the system-wide picture than they do for solar.
+![Wind vs solar model accuracy comparison](images/wind_vs_solar_accuracy.png)
+
+Solar outperforms wind by a wide margin, and the gap turned out to be more interesting to investigate than to just report. Wind turbines generate power roughly proportional to wind speed cubed, not wind speed directly, so a plain straight-line model should structurally struggle to capture that curve. To test this directly, wind speed cubed was added as an extra input — if the curve were the main problem, this should have produced a large improvement. Instead, R² moved only from 0.237 to 0.243, a negligible change. This rules out the shape of the wind-to-power relationship as the primary bottleneck. The more likely explanation: ERCOT's wind fleet is spread across hundreds of miles of Texas, while this project only measures wind speed at 4 points — a coverage gap that a single mathematical transformation of one already-limited input can't fix. Solar is less affected by this same limitation because sunlight is more spatially uniform across a region at a given time than wind speed is.
+
+This is a hypothesis, not yet a proven fact — it wasn't tested directly by adding more locations. If time allows, adding several more Texas weather points and re-running the wind model would be the natural next step to confirm or reject it.
 
 ![Solar generation: actual vs predicted, sample week June 2023](images/solar_prediction_chart.png)
 
@@ -59,7 +63,13 @@ While inspecting an unusually large generation swing, solar output appeared to p
 
 ### 2. Multicollinearity between GHI and hour-of-day
 
-Even after the timezone fix, solar's GHI coefficient can flip sign depending on which other time-related features are included, because GHI and hour-of-day both encode "is it midday." This was tested directly: removing `hour` dropped R² from 0.467 to 0.111 (confirming `hour` carries real predictive signal), while removing `Cloud Type` left R² and the GHI sign essentially unchanged (ruling it out as the cause). The conclusion: `hour` is retained for its predictive value, and individual coefficient signs in the solar model should not be over-interpreted in isolation — the model's overall R² remains a valid measure of predictive power regardless.
+Even after the timezone fix, solar's GHI coefficient can flip sign depending on which other time-related features are included, because GHI and hour-of-day both encode "is it midday." This was tested manually: removing `hour` dropped R² from 0.467 to 0.111 (confirming `hour` carries real predictive signal), while removing `Cloud Type` left R² and the GHI sign essentially unchanged (ruling it out as the cause).
+
+To confirm this manual finding formally, a Variance Inflation Factor (VIF) test — the standard statistical diagnostic for multicollinearity — was run on all solar model features. The results were low across the board (GHI: 1.46, Cloud Type: 1.04, Temperature: 1.53, hour: 1.04, month: 1.08), all well under the ~5–10 threshold that signals a real problem — seemingly contradicting the manual finding. Plotting GHI against hour resolved the contradiction: GHI follows a clear non-linear, hill-shaped curve across the day (zero at night, peaking near midday), rather than a straight-line relationship. VIF only detects *linear* correlation between variables, so it missed this real, curved overlap entirely. The manual test caught something a standard linear diagnostic could not.
+
+The conclusion: `hour` is retained for its predictive value, and individual coefficient signs in the solar model should not be over-interpreted in isolation. This also illustrates a broader limitation worth noting: standard multicollinearity diagnostics are built around linear relationships, and can miss real overlap between variables that are cyclical or time-of-day-driven, like solar irradiance.
+
+![GHI vs hour of day, showing the non-linear daily curve](images/ghi_vs_hour_check.png)
 
 ## Grid Preparedness Findings
 
@@ -71,7 +81,7 @@ Even after the timezone fix, solar's GHI coefficient can flip sign depending on 
 
 ## Limitations
 
-- Linear regression cannot capture wind power's nonlinear (cubic) relationship with wind speed; a polynomial or tree-based model would likely improve wind R² further.
+- Testing showed wind's low R² is not primarily explained by the nonlinear wind-speed-to-power curve (adding wind speed cubed only improved R² from 0.237 to 0.243). Insufficient spatial coverage of ERCOT's geographically dispersed wind fleet is the more likely cause, though this remains an untested hypothesis — adding more representative wind locations is the natural next step to confirm it.
 - Four weather points are a simplification of ERCOT's dispersed wind and solar fleet; capacity-weighted or a larger set of representative stations would improve location representativeness.
 - The 6-hour timezone correction does not account for daylight saving time (Texas shifts to UTC−5 part of the year), introducing a small residual misalignment during DST months.
 - Solar model coefficients should not be individually interpreted due to the documented GHI/hour multicollinearity; only the model's aggregate predictive accuracy (R²) should be relied on.
