@@ -11,11 +11,17 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 }
 
+# Our original 4 locations, plus 4 new ones added to test whether more
+# spatial coverage of ERCOT's wind fleet improves the wind model's accuracy
 locations = [
     {"name": "midland", "lat": 31.99, "lon": -102.08},
     {"name": "sweetwater", "lat": 32.47, "lon": -100.41},
     {"name": "fortstockton", "lat": 30.89, "lon": -102.88},
     {"name": "amarillo", "lat": 35.22, "lon": -101.83},
+    {"name": "abilene", "lat": 32.45, "lon": -99.73},
+    {"name": "lubbock", "lat": 33.58, "lon": -101.86},
+    {"name": "bigspring", "lat": 32.25, "lon": -101.48},
+    {"name": "mccamey", "lat": 31.13, "lon": -102.22},
 ]
 
 years = [2021, 2022, 2023]

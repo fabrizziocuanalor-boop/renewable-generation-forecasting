@@ -34,7 +34,7 @@ print(f"Combined generation table: {generation.shape[0]} rows")
 # STEP 2: For each location, combine its years of weather, then merge with generation
 # ============================================
 
-locations = ["midland", "sweetwater", "fortstockton", "amarillo"]
+locations = ["midland", "sweetwater", "fortstockton", "amarillo", "abilene", "lubbock", "bigspring", "mccamey"]
 
 all_location_pieces = []
 
