@@ -1,177 +1,202 @@
 # Renewable Generation Forecasting Tool — ERCOT (Texas)
 
-A regression-based tool that predicts hourly wind and solar generation on the ERCOT (Texas) grid using historical meteorological variables, and uses that model to assess how prepared the grid is for renewable generation variability. This project tests the predictive relationship between weather and generation using historical observations, not live operational forecasts — see Limitations for what would be needed to extend this to a true forecasting tool.
+This project uses historical weather data — sunlight, wind speed, cloud cover, and temperature — from the ERCOT (Texas) grid to predict how much wind and solar power was generated each hour. It then uses those predictions to look at how prepared the grid is for how much that generation swings around.
+
+One note on scope: this project uses historical weather observations to test whether weather predicts generation — it's not yet a live forecasting tool. That said, the same models could plausibly be extended to run on forecast data (like a 24-hour-ahead weather forecast) instead of historical observations, which is what a deployable forecasting tool would actually need. That extension wasn't tested here — see Limitations for what it would take.
 
 **Author:** Fabrizzio Cuanalo
 **Repo:** [renewable-generation-forecasting](https://github.com/fabrizziocuanalor-boop/renewable-generation-forecasting)
 
 ## Executive Summary
 
-This project builds a linear regression model that predicts ERCOT hourly wind and solar generation from weather variables (irradiance, wind speed, cloud cover, temperature), trained on 2021–2022 data and validated on unseen 2023 data. The solar model explains 58.2% of generation variance (R² = 0.582); the wind model explains 26.4% (R² = 0.264) after testing two competing explanations for wind's lower predictability — a nonlinear wind-speed-to-power relationship, which testing ruled out as the primary cause, and insufficient spatial coverage of ERCOT's dispersed wind fleet, which testing confirmed by expanding from 4 to 8 Texas weather locations and observing a real accuracy improvement.
+Solar and wind are different problems for the Texas power grid.
 
-Beyond the modeling, three investigations turned out to be as valuable as the models themselves: a 6-hour timezone misalignment between the weather and generation data sources, a multicollinearity issue between solar irradiance and time-of-day that a standard statistical test failed to catch (and why), and the two-hypothesis test that identified the real driver of wind's lower accuracy. All three are documented below as they actually happened, including the dead ends, because that process is as representative of real analytical work as the final numbers.
+Solar changes a lot, especially around sunrise and sunset, but we can generally predict when those changes will happen. So ERCOT can prepare for them ahead of time.
 
-The grid-preparedness analysis shows that the largest hour-to-hour swings in combined renewable output are driven predominantly by solar's predictable daily sunset/sunrise cycle, while wind's own variability is roughly constant around the clock (statistically indistinguishable between daytime and all-hours) — meaning wind's unpredictability, not solar's, is the harder operational problem for grid reserve planning.
+Wind doesn't follow a predictable daily schedule. It can change because weather systems move around Texas. So ERCOT needs to keep resources available for unexpected wind changes.
+
+To test this, I built two regression models — one predicting wind generation, one predicting solar generation — using weather data from 8 Texas locations across 2021-2023, trained on 2021-2022 and tested on unseen 2023 data. The solar model explains about 58% of solar's variation (R² = 0.582). The wind model explains about 26% (R² = 0.264), after testing two different explanations for why wind is harder to predict — the physical curve of how wind speed relates to turbine output, and how many weather locations were used. The second explanation turned out to matter more (see Model Results).
+
+Along the way, three things came up that were as valuable as the models themselves: a 6-hour timezone mismatch between the two data sources that I found and fixed, a confusing negative number in the solar model that a standard statistical test missed, and the test that showed why wind is harder to predict than solar. All three are documented below as they actually happened, including the parts that didn't work, because that's a more honest picture of how the project came together than just the final numbers.
+
+In our data, roughly 95% of hourly wind changes were below about 2,376 MWh. That number could be used as a starting benchmark for thinking about reserve needs, but it shouldn't be interpreted as ERCOT's actual required reserve amount — real reserve planning depends on a lot more than renewable variability alone. We also noticed that the biggest winter solar swings became larger each year across our 3 years of data. Increasing solar capacity in Texas could explain this, but three years isn't enough data to prove it.
 
 ## Data Sources
 
 | Source | What | Coverage |
 |---|---|---|
-| [NREL NSRDB (GOES Aggregated v4.0.0)](https://developer.nlr.gov/docs/solar/nsrdb/) | Hourly GHI, wind speed, cloud type, air temperature | 8 Texas locations, 2021–2023 |
-| [EIA API v2](https://www.eia.gov/opendata/) — `electricity/rto/fuel-type-data` | Hourly ERCOT wind & solar net generation (MWh) | ERCOT (respondent `ERCO`), 2021–2023 |
+| [NREL NSRDB (GOES Aggregated v4.0.0)](https://developer.nlr.gov/docs/solar/nsrdb/) | Hourly sunlight (GHI), wind speed, cloud type, temperature | 8 Texas locations, 2021–2023 |
+| [EIA API v2](https://www.eia.gov/opendata/) — `electricity/rto/fuel-type-data` | Hourly ERCOT wind & solar generation (MWh) | ERCOT (respondent `ERCO`), 2021–2023 |
 
-**Locations** (chosen to represent ERCOT's main wind and solar resource clusters, expanded from an initial 4 to 8 after testing showed spatial coverage was a key limitation for the wind model — see Model Results):
-Midland, Sweetwater, Fort Stockton, Amarillo, Abilene, Lubbock, Big Spring, McCamey.
+Two different data sources were needed because no single source publishes both weather and generation data together. NREL is a US research lab that runs NSRDB, a satellite-based weather database. EIA is the US agency that tracks energy production, including hourly generation broken down by fuel type, collected from grid operators like ERCOT.
+
+**Locations:** Midland, Sweetwater, Fort Stockton, Amarillo, Abilene, Lubbock, Big Spring, McCamey. We started with the first 4 and later added the other 4 after testing showed that more locations improved the wind model (see Model Results below) — ERCOT's wind farms are spread across a huge area of Texas, so a handful of single weather readings only goes so far in representing the whole fleet.
 
 **Final merged dataset:** 210,192 hourly rows (8 locations × ~26,274 hours each) — `data/final_dataset.csv`.
 
 ## Methodology
 
-1. **Collection:** Automated download scripts (`download_weather.py`, `download_generation.py`) pull weather and generation data via API, with pagination handling for EIA's 5,000-row-per-request limit.
-2. **Merge:** Weather and generation data are joined on a common hourly timestamp (`build_dataset.py`). ERCOT-wide generation is paired with each location's local weather, since ERCOT is a single balancing authority without location-level generation reporting.
-3. **Modeling:** Separate linear regression models for wind and solar generation, trained on 2021–2022 and tested on 2023 — a chronological (not random) split, to avoid data leakage from training and testing on the same time period.
-4. **Grid analysis:** Hour-to-hour changes in combined generation are used as a proxy for the ramping capacity ERCOT must maintain in reserve.
+1. **Collection:** Scripts (`download_weather.py`, `download_generation.py`) pull weather and generation data from each API. EIA only returns 5,000 rows per request, so the generation script loops through multiple requests per year to get complete data.
+2. **Merge:** Weather and generation data are matched up by timestamp (`build_dataset.py`). ERCOT reports generation for the whole grid, not by location, so each location's weather is paired with the same system-wide generation numbers.
+3. **Modeling:** Separate regression models for wind and solar. Trained on 2021-2022, tested on 2023 — split by time rather than randomly, so the model is only ever tested on data it hasn't seen, from a period after everything it learned from.
+4. **Grid analysis:** Hour-to-hour changes in generation are used as a stand-in for how much backup capacity ERCOT needs to keep ready.
 
-## Research Process
+## How the Project Actually Came Together
 
-The final model was not the result of a single modeling specification decided upfront. The analysis evolved through several diagnostic iterations, each triggered by a specific, checkable problem:
+The final version of this project wasn't planned out from the start — it came from following up on things that looked wrong or unexplained along the way.
 
-1. An initial 4-location model was built and trained first, establishing a baseline.
-2. During validation, solar generation appeared at physically implausible hours (peaking at 8–9 PM in December). Investigating this led to discovering a 6-hour timestamp misalignment between the two data sources, which was corrected.
-3. After the fix, the wind model's accuracy remained noticeably lower than solar's. Two specific, competing explanations were tested rather than assumed: a nonlinear wind-speed-to-power relationship, and insufficient geographic coverage of the 4 original weather locations.
-4. Adding a cubic wind-speed term tested the first explanation and produced a negligible improvement. Expanding to 8 locations tested the second and produced a larger, more meaningful one — evidence favoring geographic coverage as the more significant factor, though not a fully isolated causal test (see Limitations).
-5. Separately, a counterintuitive negative coefficient on solar irradiance (GHI) was investigated manually, then checked against a formal VIF multicollinearity test, which came back low and appeared to contradict the manual finding. Plotting GHI against hour-of-day resolved the contradiction by revealing a non-linear relationship that the linear VIF test could not detect.
+1. A first version used only 4 weather locations, as a starting point.
+2. While checking the results, solar generation showed up at 8-9 PM in December, which isn't physically possible — the sun isn't up then. Digging into why led to finding a 6-hour timestamp mismatch: the generation data was in UTC time, while the weather data was in Texas local time. Fixing this made both models more accurate.
+3. After that fix, the wind model was still noticeably less accurate than the solar model. Two possible reasons were tested directly instead of guessed at: whether the model needed to account for the curved (not straight-line) relationship between wind speed and power output, and whether 4 weather locations were enough to represent ERCOT's spread-out wind farms.
+4. Adding a "wind speed cubed" input (to capture that curve) barely changed the result. Adding 4 more weather locations (8 total) made a bigger difference. That pointed to location coverage as the bigger issue, though it's not fully proven (see Limitations).
+5. Separately, one of the solar model's numbers (sunlight's effect on output) came out negative, which doesn't make physical sense. Removing other variables one at a time didn't explain it. Running a standard statistical test (VIF) for this exact problem said there was no issue — which contradicted what the manual testing suggested. Plotting sunlight against hour of day explained the disagreement: sunlight follows a curved, hill-shaped pattern across the day, and the standard test only catches straight-line relationships, so it missed this one.
 
-Each step above was driven by a specific anomaly or open question, not a predetermined plan — the raw script history and intermediate results are preserved in the repository's commit history for anyone who wants to trace the sequence.
+This isn't a complete list of every dead end, but it reflects how the project actually moved forward — one specific, checkable question at a time.
 
 ## Model Results
 
-| Model | Features | Locations | MAE (MWh) | R² |
+| Model | Inputs | Locations | Average Error (MWh) | R² |
 |---|---|---|---|---|
 | Wind | Wind Speed, Wind Speed³, Temperature, hour, month | 4 | 4,540 | 0.243 |
 | Wind | Wind Speed, Wind Speed³, Temperature, hour, month | 8 | 4,464 | 0.264 |
-| Solar | GHI, Cloud Type, Temperature, hour, month | 8 | 1,993 | 0.582 |
+| Solar | Sunlight (GHI), Cloud Type, Temperature, hour, month | 8 | 1,993 | 0.582 |
 
 ![Wind vs solar model accuracy comparison](images/wind_vs_solar_accuracy.png)
 
-Solar outperforms wind by a wide margin, and the gap turned out to be more interesting to investigate than to just report. Wind turbines generate power roughly proportional to wind speed cubed, not wind speed directly, so a plain straight-line model should structurally struggle to capture that curve. Two competing explanations were tested directly rather than assumed:
+Solar's model is noticeably more accurate than wind's, and figuring out why was more useful than just reporting the gap.
 
-1. **The nonlinear wind-speed-to-power curve.** Adding wind speed cubed as an extra input only improved R² from 0.237 to 0.243 — a negligible change, ruling this out as the primary bottleneck.
-2. **Insufficient spatial coverage of ERCOT's dispersed wind fleet.** The original 4 weather locations were expanded to 8 (adding Abilene, Lubbock, Big Spring, and McCamey), covering more of West Texas's wind corridor. This produced a real improvement, from R² = 0.243 to R² = 0.264 — a meaningfully larger jump than the cubic term provided, providing evidence that spatial coverage was a more significant limitation than the wind-speed-cubed term in this specification.
+Wind turbines produce power roughly proportional to wind speed cubed, not wind speed directly — power increases slowly at low wind speeds, then much faster, then levels off once a turbine hits its max output. A straight-line model can't naturally capture that curve, so it seemed like a likely reason wind was harder to predict.
 
-This is evidence, not a clean causal proof. Only one set of 4 additional locations was tested, so it isn't possible to fully separate "spatial coverage in general" from "these particular 4 towns happened to correlate well with ERCOT-wide wind output." A stronger test would compare several different sets of added locations, or weight locations by installed wind capacity, to confirm the effect is really about coverage rather than the specific points chosen.
+Two explanations were tested side by side, rather than picking one and assuming it was right:
 
-Solar's R² barely moved with the added locations (0.579 → 0.582), consistent with the theory: sunlight is more spatially uniform across a region at a given time than wind speed is, so solar was never as constrained by limited geographic coverage in the first place.
+1. **The curved relationship between wind speed and power.** Adding wind speed cubed as an extra input only moved R² from 0.237 to 0.243 — barely anything. This ruled out the curve as the main problem.
+2. **Not enough weather locations to represent ERCOT's spread-out wind farms.** Going from 4 locations to 8 (adding Abilene, Lubbock, Big Spring, and McCamey) moved R² from 0.243 to 0.264 — a bigger jump than the cubic term gave us. This points to location coverage as the more significant limitation of the two.
+
+This is evidence, not full proof. Only one specific set of 4 additional locations was tested, so it's possible the improvement partly reflects those particular towns rather than "more coverage" as a general rule. A more rigorous test would try different sets of added locations, or weight locations by how much wind capacity is actually installed nearby.
+
+Solar's R² barely moved with the extra locations (0.579 → 0.582), which makes sense — sunlight tends to be more similar across a region at the same time of day than wind speed is, so solar was never as limited by having only a few locations in the first place.
 
 ![Solar generation: actual vs predicted, sample week June 2023](images/solar_prediction_chart.png)
 
-*The model correctly captures the daily on/off solar cycle but consistently under-predicts peak output — visually illustrating what an R² of 0.579 looks like in practice: directionally correct, but imperfect.*
+*The model correctly follows the daily on/off solar pattern but tends to under-predict the peak. That's what an R² of 0.579 actually looks like: pointed in the right direction, but not precise.*
 
 ## Data Quality Investigations
 
-### 1. Timezone misalignment (found and fixed)
+### 1. Timezone mismatch (found and fixed)
 
-While inspecting an unusually large generation swing, solar output appeared to peak at 8–9 PM — physically impossible in December. Root cause: EIA's `period` timestamps are in UTC, while the weather data was pulled in Texas local time. Correcting the 6-hour offset in `build_dataset.py` improved both models and fixed a physically nonsensical coefficient (see below):
+While looking at an unusually large swing in the data, solar generation appeared to peak around 8-9 PM — which isn't possible in December, when the sun sets by early evening. This pointed to a timezone mismatch: the weather data was explicitly pulled in Texas local time, and the pattern looked exactly like what you'd see if the generation data were actually in UTC (6 hours ahead of Texas in winter), even though nothing in the raw data or documentation stated this directly. To confirm the hypothesis rather than just assume it, I shifted the generation timestamps back 6 hours and checked whether solar started peaking at a physically sensible time — it did, moving from an impossible 8-9 PM peak to a normal midday peak. That confirmation, not an official statement from EIA, is what verified the fix. Applying the 6-hour shift in `build_dataset.py` improved both models:
 
 | | Before fix | After fix |
 |---|---|---|
 | Solar R² | 0.467 | 0.579 |
 | Wind R² | 0.185 | 0.237 |
-| GHI coefficient | −4.14 (physically wrong sign) | +7.00 (correct sign) |
+| Sunlight's effect on solar output | −4.14 (wrong direction) | +7.00 (correct direction) |
 
-### 2. Multicollinearity between GHI and hour-of-day
+### 2. A confusing number in the solar model
 
-Even after the timezone fix, solar's GHI coefficient can flip sign depending on which other time-related features are included, because GHI and hour-of-day both encode "is it midday." This was tested manually: removing `hour` dropped R² from 0.467 to 0.111 (confirming `hour` carries real predictive signal), while removing `Cloud Type` left R² and the GHI sign essentially unchanged (ruling it out as the cause).
+Even after the timezone fix, the solar model's number for sunlight's effect on output would sometimes come out negative — saying "more sunlight, less power," which makes no sense. The likely reason: sunlight and hour-of-day both roughly describe the same thing (is it the middle of the day), so the model has trouble telling which one deserves credit.
 
-To confirm this manual finding formally, a Variance Inflation Factor (VIF) test — the standard statistical diagnostic for multicollinearity — was run on all solar model features. The results were low across the board (GHI: 1.46, Cloud Type: 1.04, Temperature: 1.53, hour: 1.04, month: 1.08), all well under the ~5–10 threshold that signals a real problem — seemingly contradicting the manual finding. Plotting GHI against hour resolved the contradiction: GHI follows a clear non-linear, hill-shaped curve across the day (zero at night, peaking near midday), rather than a straight-line relationship. VIF only detects *linear* correlation between variables, so it missed this real, curved overlap entirely. The manual test caught something a standard linear diagnostic could not.
+This was checked two ways. First, manually: removing hour-of-day from the model dropped its accuracy a lot (R² fell from 0.467 to 0.111), showing that hour genuinely carries useful information. Removing cloud cover instead barely changed anything, ruling that out as the cause.
 
-The conclusion: `hour` is retained for its predictive value, and individual coefficient signs in the solar model should not be over-interpreted in isolation. This also illustrates a broader limitation worth noting: standard multicollinearity diagnostics are built around linear relationships, and can miss real overlap between variables that are cyclical or time-of-day-driven, like solar irradiance.
+Second, formally: a standard statistical test for this exact problem (called VIF) came back showing no issue at all — every score was low, which seemed to contradict the manual finding. Plotting sunlight against hour of day explained why: the relationship is a curve (rising through the morning, peaking at noon, falling in the evening), not a straight line. The standard test only catches straight-line relationships, so it missed a real, curved overlap that the manual testing had already picked up on.
+
+The takeaway: hour-of-day stays in the model because it's genuinely useful, and the sunlight coefficient specifically shouldn't be read on its own — but the model's overall accuracy score is still a fair measure of how well it works.
 
 ![GHI vs hour of day, showing the non-linear daily curve](images/ghi_vs_hour_check.png)
 
 ## Grid Preparedness Findings
 
-- Combined wind+solar generation across 2021–2023 averaged **14,521 MWh/hour**, with a standard deviation of **6,171 MWh**.
-- The largest single hour-to-hour swing in the dataset was **−10,318 MWh**, occurring at sunset on December 29, 2023 — driven primarily by solar's predictable evening ramp-down (13,213 → 0 MWh over four hours), compounding with a same-day wind decline.
-- Isolating wind-only variability to daytime hours (9 AM–5 PM, excluding sunrise/sunset) gives a standard deviation of **1,035 MWh**, nearly identical to wind's all-hours standard deviation of **1,135 MWh**. This indicates wind's variability is driven by weather systems, not time of day — unlike solar, it cannot be "scheduled around."
+- Combined wind and solar generation averaged about **14,521 MWh per hour** across 2021-2023, with a lot of spread around that average (standard deviation of 6,171 MWh).
+- The single biggest hour-to-hour drop in the whole dataset was **−10,318 MWh**, at sunset on December 29, 2023 — mostly explained by solar's normal evening ramp-down (13,213 → 0 MWh over four hours), plus a same-day dip in wind.
+- Looking at wind on its own during daytime hours only (9 AM-5 PM, avoiding sunrise/sunset effects), its typical hour-to-hour swing (standard deviation of 1,035 MWh) is nearly identical to its swing across all hours of the day (1,135 MWh). In other words, wind is about equally variable no matter the time of day — it doesn't follow a schedule the way solar does.
 
-**Implication:** ERCOT's most predictable large swings (daily solar ramps) are the easiest to plan reserve capacity for, since their timing and magnitude are known in advance. Wind's variability, while individually smaller in typical hourly magnitude, is persistent and unpredictable around the clock, making it the harder resource to hold reserves against — a distinction that should inform how storage and dispatchable backup capacity are allocated.
+**What this means:** solar's biggest swings happen at a known time every day, so ERCOT can schedule backup power in advance. Wind's swings can happen at any hour, so backup capacity for wind needs to be ready at all times, not scheduled around a pattern.
+
+## Recommendation
+
+Wind and solar fail in different ways, so they probably shouldn't be planned for the same way.
+
+For wind: in this data, 95% of hourly swings stayed under about 2,376 MWh. That number is a useful starting point for thinking about how much backup capacity to keep ready — but it isn't a full answer. Real reserve planning depends on a lot more than renewable variability alone, including demand uncertainty, other generators going offline, and transmission limits, none of which this project looked at. The rarer 5% of hours with bigger swings (like fast-moving weather fronts) would need separate planning beyond a standard day-to-day reserve.
+
+For solar: since its big swings happen at a predictable time (sunset and sunrise), backup capacity can be scheduled in advance rather than held on standby constantly. Typical swings were somewhat bigger in summer than winter in this data, likely because longer days mean more total solar output available to swing around. One thing worth watching: the single biggest winter solar drop got larger every year across our 3 years of data (2021: −3,787 MWh, 2022: −4,923 MWh, 2023: −7,455 MWh). This lines up with Texas adding a lot of solar capacity over that period, but three years isn't enough data to call it a confirmed trend — it's worth checking again with more years of data before treating it as reliable.
 
 ## Limitations
 
-- This project uses historical weather observations (NSRDB), not live operational weather forecasts. It tests whether a predictive relationship exists between meteorological variables and generation, not the accuracy of a deployable next-day forecasting system. Extending this to true forecasting would require substituting forecast data (with its own error characteristics) for the historical observations used here, and validating against forecast lead time.
-- Two competing explanations for wind's low R² were tested directly: the nonlinear wind-speed-to-power curve (adding wind speed cubed only improved R² from 0.237 to 0.243) and insufficient spatial coverage (expanding from 4 to 8 weather locations improved R² from 0.243 to 0.264). This is evidence that spatial coverage was the more significant limitation of the two, not a fully isolated causal proof — only one set of 4 additional locations was tested, so it's possible the improvement partly reflects those specific towns rather than coverage in general. Wind's R² of 0.264 still leaves most of its variation unexplained — further gains would likely require broader coverage still, capacity-weighted station selection, or a non-linear model.
-- Four weather points are a simplification of ERCOT's dispersed wind and solar fleet; capacity-weighted or a larger set of representative stations would improve location representativeness.
-- The 6-hour timezone correction does not account for daylight saving time (Texas shifts to UTC−5 part of the year), introducing a small residual misalignment during DST months.
-- Solar model coefficients should not be individually interpreted due to the documented GHI/hour multicollinearity; only the model's aggregate predictive accuracy (R²) should be relied on.
+- This project uses historical weather observations, not live weather forecasts. It tests whether weather predicts generation, not whether a deployable forecasting tool works with real forecast data (which has its own errors). The same models could plausibly extend to a real forecasting tool by swapping in forecast data instead of historical observations, and checking accuracy at different forecast lead times — that extension is a natural next step, not something ruled out by this project.
+- Two explanations for wind's low accuracy were tested directly: the curved wind-speed-to-power relationship (barely helped) and limited location coverage (helped more). This points to location coverage as the bigger factor, but it's not fully proven — only one set of 4 additional locations was tested, so part of the improvement could be specific to those towns rather than "more coverage" in general. Wind's R² of 0.264 still leaves most of its variation unexplained; getting further would likely need even broader coverage, weighting locations by installed wind capacity, or a model that can handle curves.
+- The 6-hour timezone fix doesn't account for daylight saving time (Texas shifts to UTC-5 part of the year), so there's a small remaining mismatch during those months.
+- The solar model's sunlight coefficient shouldn't be read on its own, due to the overlap with hour-of-day described above — only the model's overall accuracy score should be trusted.
+- The apparent year-over-year growth in winter solar swings is based on only 3 data points and shouldn't be treated as a confirmed trend without more years of data.
 
 ## Repository Structure
 
 ```
 data/
-  raw/                      # Original downloaded weather & generation CSVs
-  final_dataset.csv         # Merged, cleaned dataset used for modeling
+  raw/                       # Original downloaded weather & generation CSVs
+  final_dataset.csv          # Merged, cleaned dataset used for modeling
 images/
-  solar_prediction_chart.png # Actual vs predicted solar generation chart
-download_weather.py         # Pulls NREL NSRDB weather data
-download_generation.py      # Pulls EIA ERCOT generation data (with pagination)
-build_dataset.py            # Merges weather + generation into final_dataset.csv
-explore_dataset.py          # Data quality / summary statistics
-train_model.py              # Trains and evaluates wind & solar regression models
-grid_analysis.py            # Grid preparedness / variability analysis
+  solar_prediction_chart.png       # Actual vs predicted solar generation
+  wind_vs_solar_accuracy.png       # Wind vs solar R² comparison
+  ghi_vs_hour_check.png            # Sunlight vs hour of day (the curve)
+download_weather.py          # Pulls NREL weather data
+download_generation.py       # Pulls EIA generation data (handles pagination)
+build_dataset.py             # Merges weather + generation into final_dataset.csv
+explore_dataset.py           # Data quality checks
+train_model.py                # Trains and evaluates the wind & solar models
+grid_analysis.py             # Grid variability analysis
 ```
 
 ## How to Run This
 
-**Requirements:** Python 3, plus free API keys from [EIA](https://www.eia.gov/opendata/register.php) and [NREL/NLR](https://developer.nlr.gov/signup/).
+**You'll need:** Python 3, plus free API keys from [EIA](https://www.eia.gov/opendata/register.php) and [NREL/NLR](https://developer.nlr.gov/signup/).
 
-1. **Clone the repo and install dependencies:**
+1. **Clone the repo and install what it needs:**
    ```
    git clone git@github.com:fabrizziocuanalor-boop/renewable-generation-forecasting.git
    cd renewable-generation-forecasting
-   pip3 install requests python-dotenv pandas scikit-learn matplotlib --break-system-packages
+   pip install requests python-dotenv pandas scikit-learn matplotlib statsmodels
    ```
 
-2. **Add your API keys.** Create a file named `.env` in the project root containing:
+2. **Add your API keys.** Create a file named `.env` in the project folder containing:
    ```
    EIA_API_KEY=your_eia_key_here
    NREL_API_KEY=your_nrel_key_here
    ```
 
-3. **Run the pipeline in order:**
+3. **Run the scripts in order:**
    ```
-   python3 download_weather.py       # Downloads weather data (8 locations x 3 years)
-   python3 download_generation.py    # Downloads ERCOT generation data (2 fuel types x 3 years)
-   python3 build_dataset.py          # Merges everything into data/final_dataset.csv
-   python3 explore_dataset.py        # Prints data quality checks
-   python3 train_model.py            # Trains wind & solar models, saves prediction chart
-   python3 grid_analysis.py          # Runs the grid preparedness analysis
+   python download_weather.py       # Downloads weather data (8 locations x 3 years)
+   python download_generation.py    # Downloads ERCOT generation data (2 fuel types x 3 years)
+   python build_dataset.py          # Merges everything into data/final_dataset.csv
+   python explore_dataset.py        # Prints data quality checks
+   python train_model.py            # Trains wind & solar models, saves charts
+   python grid_analysis.py          # Runs the grid variability analysis
    ```
 
-Each script prints its own progress and results to the terminal. Total runtime is a few minutes, mostly spent waiting on API rate limits during download.
+Each script prints its own progress as it runs. The whole thing takes a few minutes, mostly spent waiting on the download scripts.
 
 ## Glossary
 
-**Statistical / ML terms**
-- **Regression model** — a model that predicts a number (e.g., megawatt-hours) from other numbers (e.g., wind speed), by fitting a formula to past data.
-- **Linear regression** — the simplest regression type, assuming a straight-line relationship between inputs and output.
-- **Coefficient** — the number a model assigns to each input, representing how much that input influences the prediction.
-- **R² (R-squared)** — a 0–1 score showing what share of the target's variation the model's inputs explain.
-- **MAE (Mean Absolute Error)** — the average size of the model's prediction errors, in the target's units.
-- **Training set / test set** — the training set is what the model learns from; the test set is unseen data used to check if it generalizes.
-- **Data leakage** — when test-set information accidentally influences training, inflating apparent accuracy.
-- **Multicollinearity** — when input variables are highly related to each other, making individual coefficients unreliable even if overall predictions remain valid.
-- **VIF (Variance Inflation Factor)** — the standard statistical test for multicollinearity; detects only linear (straight-line) correlation between inputs.
-- **Nonlinear relationship** — a relationship where the rate of change isn't constant, unlike a straight line.
+**Statistics / modeling terms**
+- **Regression model** — a model that predicts a number (like megawatt-hours) from other numbers (like wind speed), by fitting a formula to past data.
+- **Linear regression** — the simplest kind of regression, which assumes a straight-line relationship between inputs and output.
+- **Coefficient** — the number a model assigns to an input, showing how much that input affects the prediction.
+- **R² (R-squared)** — a score from 0 to 1 showing what share of the outcome's ups and downs the model's inputs actually explain.
+- **Average error (MAE)** — on average, how far off the model's predictions were, in real units.
+- **Training set / test set** — the training set is what the model learns from; the test set is separate, unseen data used to check if it actually works.
+- **Data leakage** — when information from the test set accidentally sneaks into training, making a model look better than it really is.
+- **Multicollinearity** — when two or more inputs are closely related to each other, which can make a model's individual numbers unreliable even if its overall predictions are fine.
+- **VIF (Variance Inflation Factor)** — the standard test for multicollinearity. It only catches straight-line relationships between inputs.
+- **Nonlinear relationship** — a relationship where the rate of change isn't constant, unlike a straight line (a curve, basically).
 
-**Domain-specific terms**
-- **ERCOT** — the organization managing the electric grid for most of Texas.
-- **Balancing authority** — an organization responsible for keeping electricity supply and demand matched in real time across its grid.
-- **GHI (Global Horizontal Irradiance)** — a measurement of sunlight intensity, used as the main solar generation predictor.
-- **MWh (Megawatt-hour)** — a unit of electrical energy: one megawatt sustained for one hour.
-- **UTC (Coordinated Universal Time)** — a global time standard many large data systems default to, instead of local time zones.
-- **Pagination** — when an API limits results per request, requiring multiple sequential requests to retrieve all the data.
+**Energy / domain terms**
+- **ERCOT** — the organization that runs the electric grid for most of Texas.
+- **Balancing authority** — an organization responsible for keeping electricity supply and demand matched at all times across its grid.
+- **GHI (Global Horizontal Irradiance)** — a measurement of sunlight intensity, used here as the main predictor of solar output.
+- **MWh (Megawatt-hour)** — a unit of electricity: one megawatt of power sustained for one hour.
+- **UTC (Coordinated Universal Time)** — a global time standard many data systems default to, instead of local time zones.
+- **Pagination** — when an API limits how many results it gives per request, so you have to ask multiple times to get everything.
 
 ## Tools
 
-Python, pandas, scikit-learn, matplotlib, NREL NSRDB API, EIA API v2.
+Python, pandas, scikit-learn, statsmodels, matplotlib, NREL NSRDB API, EIA API v2.
