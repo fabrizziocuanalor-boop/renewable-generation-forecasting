@@ -4,7 +4,11 @@
 
 This project uses historical weather data (sunlight, wind speed, cloud cover, temperature) from Texas to predict how much wind and solar power ERCOT, the organization that runs the Texas power grid, generated each hour. It then uses those predictions to look at how prepared the grid is for how much that generation swings around. I built this to test a specific question: can weather alone tell us enough to plan around renewable generation's ups and downs, and if not, why not?
 
-Full technical details, data sources, setup instructions, and a glossary of terms are in [`docs/technical_notes.md`](docs/technical_notes.md). This README focuses on what I built, what I found, and how the project actually came together.
+Full technical details, data sources, setup instructions, a Works Cited list, and a glossary of terms are in [`docs/technical_notes.md`](docs/technical_notes.md). This README focuses on what I built, what I found, and how the project actually came together.
+
+## How I Approached the Parts I Didn't Already Know
+
+I don't have a background in electrical engineering, physics, or statistics. Wherever this project relies on how wind or solar power physically works, or on a specific statistical method with real rules behind it, I researched it and cited the source below rather than assuming I already knew it. Where the reasoning combined several ideas rather than coming from one single paper, such as the VIF threshold discussion or the reserve-planning recommendation, I used Claude to help verify the logic, then checked the sources it pointed me to myself rather than trusting either the math or the citations at face value.
 
 ## Why This Problem Matters
 
@@ -12,7 +16,7 @@ Solar and wind are different problems for a power grid. Solar changes a lot, esp
 
 ## What I Built
 
-Using weather data from 8 Texas locations across 2021-2023 and matching hourly ERCOT generation data, I built two regression models, one predicting wind generation and one predicting solar generation. Both were trained on 2021-2022 and tested on 2023, data the models never saw during training, to check they actually generalize rather than just memorize the past. I then used the models' results to look at how much combined wind and solar generation swings hour to hour, and what that implies for how ERCOT might plan reserve capacity.
+Using weather data from 8 Texas locations across 2021-2023 and matching hourly ERCOT generation data, I built two regression models, one predicting wind generation and one predicting solar generation. Both were trained on 2021-2022 and tested on 2023, data the models never saw during training, to check they actually generalize rather than just memorize the past. Splitting by time instead of randomly is standard practice for this kind of data (Hyndman and Athanasopoulos). I then used the models' results to look at how much combined wind and solar generation swings hour to hour, and what that implies for how ERCOT might plan reserve capacity.
 
 ## How the Project Actually Came Together
 
@@ -22,11 +26,17 @@ The final version of this project wasn't planned out from the start. It came fro
 2. While checking the results, solar generation showed up at 8-9 PM in December, which isn't physically possible; the sun isn't up then. Digging into why pointed to a 6-hour timestamp mismatch: the pattern looked exactly like what you'd expect if the generation data were in UTC while the weather data was in Texas local time. Shifting the timestamps and checking that solar started peaking at a normal midday hour confirmed it. Applying that fix made both models noticeably more accurate (solar R² went from 0.467 to 0.579, wind from 0.185 to 0.237).
 3. After that fix, the wind model was still noticeably less accurate than the solar model. Two possible reasons were tested directly instead of guessed at: whether the model needed to account for the curved, not straight-line, relationship between wind speed and power output, and whether 4 weather locations were enough to represent ERCOT's spread-out wind farms.
 4. Adding a "wind speed cubed" input to capture that curve barely changed the result (R² moved from 0.237 to 0.243). Adding 4 more weather locations, 8 total, made a bigger difference (R² moved to 0.264). That pointed to location coverage as the bigger issue, though it isn't fully proven with just one added set of locations (see Limitations).
-5. Separately, one of the solar model's numbers, sunlight's effect on output, came out negative, which doesn't make physical sense. Removing other variables one at a time didn't explain it. Running a standard statistical test (VIF) for this exact problem said there was no issue, which contradicted the manual testing. Plotting sunlight against hour of day explained the disagreement: sunlight follows a curved, hill-shaped pattern across the day, and the standard test only catches straight-line relationships, so it missed this one.
+5. Separately, one of the solar model's numbers, sunlight's effect on output, came out negative, which doesn't make physical sense. Removing other variables one at a time didn't explain it. Running a standard statistical test (VIF) for this exact problem said there was no issue, which contradicted the manual testing. Plotting sunlight against hour of day explained the disagreement: sunlight follows a curved, hill-shaped pattern across the day, and the standard test only catches straight-line relationships, so it missed this one. Details, including why the usual VIF threshold doesn't tell the whole story here, are in [`docs/technical_notes.md`](docs/technical_notes.md) (O'Brien).
 
 This isn't a complete list of every dead end, but it reflects how the project actually moved forward, one specific, checkable question at a time.
 
 ## Results
+
+**What these numbers actually mean:**
+- **R² (R-squared):** think of it as a report card grade for how much of the ups and downs in generation the weather actually explains, from 0% to 100%. A solar R² of 0.582 means the weather inputs explain about 58% of why solar generation went up and down. The other 42% is caused by something the model doesn't have access to.
+- **Average error (MAE):** on a typical hour, how far off was the model's guess, in either direction. An average error of 1,993 MWh means a typical guess was off by about that much.
+- **Standard deviation:** how spread out a set of numbers usually is around its average. A bigger standard deviation means the numbers jump around more.
+- **Percentile (like "95th percentile"):** line up every value from smallest to biggest. The 95th percentile is the point where 95% of values are smaller than it, and only the biggest 5% are bigger.
 
 | Model | Inputs | Locations | Average Error (MWh) | R² |
 |---|---|---|---|---|
@@ -36,7 +46,7 @@ This isn't a complete list of every dead end, but it reflects how the project ac
 
 ![Wind vs solar model accuracy comparison](images/wind_vs_solar_accuracy.png)
 
-Solar's model is noticeably more accurate than wind's. Wind turbines produce power roughly proportional to wind speed cubed, not wind speed directly, so a straight-line model naturally struggles to capture that curve. But testing showed the curve wasn't actually the main problem: adding wind speed cubed barely moved the score. Expanding from 4 to 8 weather locations moved it more, pointing to insufficient coverage of ERCOT's spread-out wind fleet as the bigger limitation of the two, not full proof, but real evidence. Solar's score barely moved with more locations, which makes sense since sunlight is more uniform across a region than wind speed is, so solar was never as limited by having only a few locations.
+Solar's model is noticeably more accurate than wind's, and the physics of each energy source explains part of why. Wind turbines produce power roughly proportional to wind speed cubed, not wind speed directly (United States, Department of Energy), so a straight-line model naturally struggles to capture that curve. Solar panels behave more simply: their power output increases roughly in a straight line as sunlight intensity increases (PVEducation), which is a large part of why a straight-line model fits solar better than wind even before any other factor is considered. Testing showed the curve wasn't actually wind's main problem, though: adding wind speed cubed barely moved the score. Expanding from 4 to 8 weather locations moved it more, pointing to insufficient coverage of ERCOT's spread-out wind fleet as the bigger limitation of the two, not full proof, but real evidence. Solar's score barely moved with more locations, which makes sense since sunlight is more uniform across a region than wind speed is, so solar was never as limited by having only a few locations.
 
 ![Solar generation: actual vs predicted, sample week June 2023](images/solar_prediction_chart.png)
 
@@ -50,7 +60,7 @@ The same negative-coefficient investigation is detailed in `docs/technical_notes
 
 Combined wind and solar generation averaged about 14,521 MWh per hour across 2021-2023, with a lot of spread around that average (standard deviation of 6,171 MWh). The single biggest hour-to-hour drop in the dataset was 10,318 MWh, at sunset on December 29, 2023, mostly explained by solar's normal evening ramp-down plus a same-day dip in wind. Looking at wind on its own during daytime hours only, its typical swing is nearly identical to its swing across all hours of the day. Wind is about equally variable no matter the time of day; it doesn't follow a schedule the way solar does.
 
-**Recommendation:** wind and solar fail in different ways, so they probably shouldn't be planned for the same way. For wind, 95% of hourly swings in this data stayed under about 2,376 MWh. That number is a useful starting benchmark for thinking about backup capacity, but it isn't a full answer since real reserve planning depends on a lot more than renewable variability alone (demand uncertainty, other generators going offline, transmission limits), none of which this project looked at. The rarer 5% of hours with bigger swings, like fast-moving weather fronts, would need separate contingency planning. For solar, since its big swings happen at a predictable time, backup capacity can be scheduled in advance rather than held constantly on standby. Typical swings were somewhat bigger in summer than winter, likely because longer days mean more total solar output available to swing around. One thing worth watching: the single biggest winter solar drop got larger every year across the 3 years studied (2021: 3,787 MWh, 2022: 4,923 MWh, 2023: 7,455 MWh), which lines up with Texas adding a lot of solar capacity over that period, but three years isn't enough data to call it a confirmed trend.
+**Recommendation:** wind and solar fail in different ways, so they probably shouldn't be planned for the same way. For wind, 95% of hourly swings in this data stayed under about 2,376 MWh. That number is a useful starting benchmark for thinking about backup capacity, but it isn't a full answer since real reserve planning depends on a lot more than renewable variability alone (demand uncertainty, other generators going offline, transmission limits), none of which this project looked at. Notably, sizing reserves around a 95th-percentile variability threshold isn't just an idea from this project; ERCOT's own ancillary services methodology uses a comparable approach, calculating the 95th percentile of net load (demand minus wind minus solar) forecast error to help set certain reserve requirements (ERCOT). The rarer 5% of hours with bigger swings, like fast-moving weather fronts, would need separate contingency planning. For solar, since its big swings happen at a predictable time, backup capacity can be scheduled in advance rather than held constantly on standby. Typical swings were somewhat bigger in summer than winter, likely because longer days mean more total solar output available to swing around. One thing worth watching: the single biggest winter solar drop got larger every year across the 3 years studied (2021: 3,787 MWh, 2022: 4,923 MWh, 2023: 7,455 MWh), which lines up with Texas adding a lot of solar capacity over that period, but three years isn't enough data to call it a confirmed trend.
 
 ## Limitations
 
@@ -59,8 +69,9 @@ Combined wind and solar generation averaged about 14,521 MWh per hour across 202
 - The 6-hour timezone fix doesn't account for daylight saving time, so there's a small remaining mismatch during those months.
 - The solar model's sunlight coefficient shouldn't be read on its own, due to its overlap with hour-of-day; only the model's overall accuracy score should be trusted.
 - The apparent year-over-year growth in winter solar swings is based on only 3 data points and shouldn't be treated as a confirmed trend without more years of data.
+- The 2,376 MWh benchmark discussed above comes from a much simpler calculation than ERCOT's actual methodology (a single percentile over 3 years of one grid-wide variable), not a full replication of their modeling process.
 
-More detail on data sources, setup instructions, the repository structure, and a glossary of terms used above are in [`docs/technical_notes.md`](docs/technical_notes.md).
+More detail on data sources, setup instructions, the repository structure, a Works Cited list, and a glossary of terms used above are in [`docs/technical_notes.md`](docs/technical_notes.md).
 
 ## Tools
 
