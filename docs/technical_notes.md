@@ -91,7 +91,7 @@ EIA. "API Technical Documentation." *U.S. Energy Information Administration*, ww
 
 ERCOT. "Recommendation Regarding 2026 ERCOT Methodologies for Determining Minimum Ancillary Service Requirements." *ERCOT*, 15 Sept. 2025, www.ercot.com/files/docs/2025/09/15/15-Recommendation-regarding-2026-ERCOT-Methodologies-for-Determining-Minimum-Ancillary-Service-Requirements.pdf. Cited as an example that percentile-based sizing of reserves against renewable variability is a real industry approach, not this project's own invention. ERCOT's actual methodology, which sizes certain reserve requirements around the 95th percentile of net load forecast error, is far more detailed than the single calculation used in this project.
 
-Hyndman, Rob J., and George Athanasopoulos. *Forecasting: Principles and Practice*. 3rd ed., OTexts, 2021, otexts.com/fpp3/. See the chapters on time series cross-validation and evaluation, which explain why random train/test splits leak future information into training for time-ordered data like this project's.
+Hyndman, Rob J., and George Athanasopoulos. *Forecasting: Principles and Practice*. 3rd ed., OTexts, 2021, otexts.com/fpp3/. See section 5.10, "Time Series Cross-Validation" (otexts.com/fpp3/tscv.html), and section 13.8, "Forecasting on Training and Test Sets" (otexts.com/fpp3/training-test.html), which explain why random train/test splits leak future information into training for time-ordered data like this project's.
 
 Marquardt, Donald W. "Generalized Inverses, Ridge Regression, Biased Linear Estimation, and Nonlinear Estimation." *Technometrics*, vol. 12, no. 3, 1970, pp. 591-612, doi:10.1080/00401706.1970.10488699. The paper credited with introducing the variance inflation factor as a diagnostic.
 
